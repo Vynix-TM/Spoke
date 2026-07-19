@@ -12,7 +12,7 @@ backBtn.addEventListener("click", () => {
 });
 
 // Keep this in sync with js/chat.js — same verification rule.
-const VERIFIED_EMAILS = ["leomh312@gmail.com", "vynixteam47@gmail.com"];
+const VERIFIED_EMAILS = ["leomh312@gmail.com", "vynixteam47@gmail.com", "leomh2@gmail.com"];
 function isVerified(u) {
   if (!u) return false;
   if (u.verified === true) return true;
