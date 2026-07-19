@@ -84,7 +84,7 @@ const MAX_BIO_LEN = 190;
 // Accounts get the badge either by an explicit `verified: true` field on
 // their user doc, or (for this one account) by email — no manual Firestore
 // edit required.
-const VERIFIED_EMAILS = ["leomh312@gmail.com", "vynixteam47@gmail.com", "leomh2@gmail.com"];
+const VERIFIED_EMAILS = ["leomh312@gmail.com", "vynixteam47@gmail.com", "leomh2@gmail.com", "zawali441378@gmail.com"];
 function isVerified(u) {
   if (!u) return false;
   if (u.verified === true) return true;
