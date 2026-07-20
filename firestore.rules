@@ -1,0 +1,200 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function myRole() {
+      return isSignedIn()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'member')
+        : 'guest';
+    }
+
+    function isStaff() {
+      return myRole() == 'admin' || myRole() == 'moderator';
+    }
+
+    function isAdmin() {
+      return myRole() == 'admin';
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn();
+
+      allow create: if isSelf(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'member';
+
+      allow update: if (isSelf(uid) && request.resource.data.role == resource.data.get('role', 'member')
+          && (!('bio' in request.resource.data) || (request.resource.data.bio is string && request.resource.data.bio.size() <= 190))
+          && (!('displayName' in request.resource.data) || (request.resource.data.displayName is string && request.resource.data.displayName.size() > 0 && request.resource.data.displayName.size() <= 40))
+        )
+        || isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    match /staff/{uid} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    match /conversations/{conversationId} {
+
+      allow read: if isSignedIn()
+        && (resource == null || request.auth.uid in resource.data.participants);
+
+      allow create: if isSignedIn()
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.participants.size() == 2
+        && (
+          // accepted request already exists elsewhere isn't checked here (client dedupes),
+          // but a freshly created convo must be 'pending' and authored by the creator
+          request.resource.data.status == 'pending'
+          && request.resource.data.requestedBy == request.auth.uid
+        );
+
+      allow update: if isSignedIn()
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.requestedBy == resource.data.requestedBy
+        && (
+          // normal message/metadata updates can't flip status
+          request.resource.data.status == resource.data.status
+          // OR the recipient (not the requester) accepts a pending request
+          || (
+            resource.data.status == 'pending'
+            && request.resource.data.status == 'accepted'
+            && request.auth.uid != resource.data.requestedBy
+          )
+        );
+
+      // Either participant can remove a conversation: to decline/cancel a pending
+      // request, or to unfriend/delete an accepted one.
+      allow delete: if isSignedIn()
+        && request.auth.uid in resource.data.participants
+        || isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+
+        allow create: if isSignedIn()
+          && request.resource.data.senderId == request.auth.uid
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 4000
+          && (
+            !('status' in get(/databases/$(database)/documents/conversations/$(conversationId)).data)
+            || get(/databases/$(database)/documents/conversations/$(conversationId)).data.status == 'accepted'
+            // while pending, only the person who sent the request can message —
+            // the recipient must accept before they can reply
+            || (
+              get(/databases/$(database)/documents/conversations/$(conversationId)).data.status == 'pending'
+              && get(/databases/$(database)/documents/conversations/$(conversationId)).data.requestedBy == request.auth.uid
+            )
+          );
+
+        // Messages are otherwise immutable except for these narrow, field-scoped cases:
+        //  1) the RECIPIENT (never the sender) may advance a message's
+        //     delivery status forward: sent -> delivered -> seen.
+        //  2) any participant may set/clear their OWN reaction, touching
+        //     nothing but their own key in the reactions map.
+        //  3) the SENDER may edit their own message's text (only if it
+        //     hasn't been deleted).
+        //  4) the SENDER may soft-delete their own message (text is
+        //     cleared, reply quote and reactions are stripped with it).
+        allow update: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants
+          && (
+            (
+              request.auth.uid != resource.data.senderId
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+              && (
+                (resource.data.get('status', 'sent') == 'sent' && request.resource.data.status in ['delivered', 'seen'])
+                || (resource.data.get('status', 'sent') == 'delivered' && request.resource.data.status == 'seen')
+              )
+            )
+            || (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+              && request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])
+            )
+            || (
+              request.auth.uid == resource.data.senderId
+              && !resource.data.get('deleted', false)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt'])
+              && request.resource.data.text is string
+              && request.resource.data.text.size() > 0
+              && request.resource.data.text.size() <= 4000
+            )
+            || (
+              request.auth.uid == resource.data.senderId
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'text', 'replyTo', 'reactions'])
+              && request.resource.data.deleted == true
+              && request.resource.data.text == ''
+            )
+          );
+
+        allow delete: if isStaff();
+      }
+    }
+
+    /* ---------- Voice calls (WebRTC signaling) ---------- */
+    match /calls/{callId} {
+      allow read: if isSignedIn()
+        && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
+
+      allow create: if isSignedIn()
+        && request.auth.uid == request.resource.data.callerUid
+        && request.resource.data.calleeUid is string
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.offer.sdp is string;
+
+      // Callee accepts (writes their answer) or either side ends/declines —
+      // never allowed to touch who the call is between or the original offer.
+      allow update: if isSignedIn()
+        && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid)
+        && request.resource.data.callerUid == resource.data.callerUid
+        && request.resource.data.calleeUid == resource.data.calleeUid
+        && request.resource.data.offer == resource.data.offer
+        && (
+          (
+            request.auth.uid == resource.data.calleeUid
+            && resource.data.status == 'ringing'
+            && request.resource.data.status == 'accepted'
+            && request.resource.data.answer.sdp is string
+          )
+          || (
+            request.resource.data.status in ['declined', 'ended', 'missed']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          )
+        );
+
+      allow delete: if isSignedIn()
+        && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
+
+      match /callerCandidates/{candidateId} {
+        allow read: if isSignedIn()
+          && (request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid
+              || request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid);
+        allow create: if isSignedIn()
+          && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid;
+      }
+      match /calleeCandidates/{candidateId} {
+        allow read: if isSignedIn()
+          && (request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid
+              || request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid);
+        allow create: if isSignedIn()
+          && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid;
+      }
+    }
+  }
+}

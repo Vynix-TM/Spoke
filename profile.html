@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spoke — Profile</title>
+<link rel="icon" href="assets/spoke-mark.png">
+<link rel="stylesheet" href="css/style.css">
+<script>
+(function(){
+  try{
+    var t = localStorage.getItem('spoke-theme') || 'dark';
+    var resolved = t === 'system'
+      ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+      : t;
+    document.documentElement.setAttribute('data-theme', resolved);
+    if (localStorage.getItem('spoke-field') !== 'off') {
+      document.documentElement.classList.add('spoke-field-on');
+    }
+  }catch(e){}
+})();
+</script>
+</head>
+<body class="profile-page-body">
+
+  <div id="boot-splash">
+    <img class="boot-mark" src="assets/vynix-logo.png" alt="Vynix">
+    <div class="boot-caption">A Vynix Production</div>
+  </div>
+
+  <div class="spoke-field" aria-hidden="true" style="position:fixed;">
+    <svg viewBox="0 0 200 200"><g stroke="#5c98ff" stroke-width="1.4" fill="none">
+      <circle cx="100" cy="100" r="98"/>
+      <line x1="100" y1="2" x2="100" y2="198"/>
+      <line x1="2" y1="100" x2="198" y2="100"/>
+      <line x1="29" y1="29" x2="171" y2="171"/>
+      <line x1="171" y1="29" x2="29" y2="171"/>
+      <circle cx="100" cy="100" r="14"/>
+    </g></svg>
+  </div>
+
+  <div class="profile-page-shell">
+    <header class="profile-page-head">
+      <button class="rail-btn back-btn profile-page-back" id="profile-page-back" type="button" title="Back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <img class="rail-logo" style="width:26px;height:26px;margin:0;" src="assets/spoke-mark.png" alt="Spoke">
+      <span class="profile-page-title">Profile</span>
+    </header>
+
+    <main class="profile-page-main" id="profile-page-main">
+      <div class="empty-state">Loading profile…</div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="js/intro.js"></script>
+  <script type="module" src="js/profile.js"></script>
+</body>
+</html>
